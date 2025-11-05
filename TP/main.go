@@ -42,7 +42,7 @@ func main() {
 	}
 
 	// Configuración de pruebas
-	testSizes := []int{3000, 4000, 5000, 6000, 7000} // Datasets más grandes
+	testSizes := []int{5000, 7000, 9000, 11000} // Datasets más grandes
 	//workerCounts := []int{2, 4, 8, 16, 32}
 	workerCounts := []int{2, 4, 8}
 
