@@ -1,0 +1,18 @@
+{
+  "dataset": "MovieLens 33M",
+  "fecha_analisis": "2025-11-06 11:05:37",
+  "usuarios_originales": 330975,
+  "peliculas_originales": 83239,
+  "ratings_originales": 33832162,
+  "usuarios_finales": 204442,
+  "peliculas_finales": 16019,
+  "ratings_finales": 31992759,
+  "sparsity_original": 99.8772,
+  "sparsity_final": 99.0231,
+  "min_user_ratings": 20,
+  "min_movie_ratings": 50,
+  "rating_range": [
+    0.5,
+    5.0
+  ]
+}
