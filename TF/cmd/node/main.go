@@ -73,7 +73,7 @@ func main() {
 		fmt.Println("    Ejemplo resultados (Secuencial):")
 		for i := 0; i < 3 && i < len(recsSeq); i++ {
 			r := recsSeq[i]
-			fmt.Printf("    %02d) movie=%d  score=%.4f\n", i+1, r.MovieID, r.Score)
+			fmt.Printf("    %02d) movie=%d\n", i+1, r.MovieID)
 		}
 
 		// PARALELO con diferentes workers
@@ -87,7 +87,7 @@ func main() {
 			fmt.Println("    Ejemplo resultados (Paralelo):")
 			for i := 0; i < 3 && i < len(recsPar); i++ {
 				r := recsPar[i]
-				fmt.Printf("    %02d) movie=%d  score=%.4f\n", i+1, r.MovieID, r.Score)
+				fmt.Printf("    %02d) movie=%d\n", i+1, r.MovieID)
 			}
 		}
 		fmt.Println()
