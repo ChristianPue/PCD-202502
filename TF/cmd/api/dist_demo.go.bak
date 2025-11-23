@@ -1,0 +1,64 @@
+package main
+
+import (
+	"fmt"
+	"time"
+
+	"TF/internal/cluster"
+	"TF/internal/ml"
+)
+
+func main() {
+
+	// -----------------------------
+	// 1) Cargar dataset
+	// -----------------------------
+	fmt.Println("== Cargando dataset ==")
+	ds, err := ml.LoadDataset("dataset/10M/ratings.csv")
+	if err != nil {
+		panic(err)
+	}
+	fmt.Printf("Usuarios=%d  Películas=%d\n\n", ds.Users, ds.Movies)
+
+	// -----------------------------
+	// 2) Crear coordinador con 2 nodos ML
+	// -----------------------------
+	coord := cluster.NewCoordinator(
+		[]string{
+			"localhost:9001",
+			"localhost:9002",
+		},
+		ds,
+	)
+
+	userID := 1
+	topK := 10
+	metric := ml.CosineSim
+	neighborK := 30
+
+	// -----------------------------
+	// 3) Ejecutar cálculo distribuido
+	// -----------------------------
+	fmt.Println("== Prueba DISTRIBUIDA ==")
+	fmt.Println("Enviando tareas a nodos 9001 y 9002...")
+
+	start := time.Now()
+
+	scores := coord.RecommendDistributed(userID, topK, metric, neighborK)
+
+	elapsed := time.Since(start)
+
+	// Convertir a topK
+	final := ml.RecommendTopK(scores, topK)
+
+	// -----------------------------
+	// 4) Imprimir resultados
+	// -----------------------------
+	fmt.Println("\n== Resultados combinados ==")
+	for i, it := range final {
+		fmt.Printf("%02d) movie=%d score=%.4f\n", i+1, it.MovieID, it.Score)
+	}
+
+	fmt.Printf("\nTiempo total distribuido: %s\n", elapsed)
+	fmt.Println("OK: los nodos procesaron partes distintas del cálculo.")
+}

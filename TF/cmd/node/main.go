@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"runtime"
 	"strings"
-	"time"
 
 	"TF/internal/ml"
 )
@@ -20,11 +18,13 @@ func banner(title string) {
 }
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Println("Uso: go run cmd/node/main.go [10|20|25]")
+	if len(os.Args) < 3 {
+		fmt.Println("Uso: go run cmd/node/main.go [10|20|25] [puerto]")
 		return
 	}
+
 	size := os.Args[1]
+	port := os.Args[2]
 
 	var datasetPath string
 	switch size {
@@ -43,55 +43,15 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("Dataset cargado OK: %s\n", datasetPath)
-	fmt.Printf("Usuarios: %d  |  Películas: %d\n", ds.Users, ds.Movies)
 
-	//---------------------------------------------
-	// CONFIGURACIÓN EXPERIMENTO
-	//---------------------------------------------
-	userID := 1
-	topK := 10
-	neighborK := 30
-	metrics := []ml.SimMetric{ml.CosineSim, ml.PearsonSim, ml.JaccardSim}
+	fmt.Printf("[NODE] Dataset cargado OK: %s\n", datasetPath)
+	fmt.Printf("[NODE] Usuarios: %d  |  Películas: %d\n", ds.Users, ds.Movies)
 
-	//---------------------------------------------
-	// ETAPA 3: MEDIR SPEEDUP Y SCALABILITY
-	//---------------------------------------------
-	fmt.Println()
-	banner("Benchmark: Secuencial vs Paralelo")
-	fmt.Printf("UserID=%d, TopK=%d, Vecinos=%d\n\n", userID, topK, neighborK)
-
-	for _, metric := range metrics {
-		fmt.Printf("==> Métrica: %s\n", metricName(metric))
-
-		// SECUENCIAL
-		startSeq := time.Now()
-		recsSeq := ml.RecommendItemBased(ds, userID, topK, metric, neighborK)
-		durSeq := time.Since(startSeq)
-		fmt.Printf("  Secuencial: %v\n", durSeq)
-
-		fmt.Println("    Ejemplo resultados (Secuencial):")
-		for i := 0; i < 3 && i < len(recsSeq); i++ {
-			r := recsSeq[i]
-			fmt.Printf("    %02d) movie=%d\n", i+1, r.MovieID)
-		}
-
-		// PARALELO con diferentes workers
-		for _, workers := range []int{2, 4, 8, runtime.NumCPU()} {
-			startPar := time.Now()
-			recsPar := ml.RecommendItemBasedParallel(ds, userID, topK, metric, neighborK, workers)
-			durPar := time.Since(startPar)
-			speedup := float64(durSeq) / float64(durPar)
-			fmt.Printf("  Paralelo (%2d workers): %-10v → Speedup: %.2fx\n", workers, durPar, speedup)
-
-			fmt.Println("    Ejemplo resultados (Paralelo):")
-			for i := 0; i < 3 && i < len(recsPar); i++ {
-				r := recsPar[i]
-				fmt.Printf("    %02d) movie=%d\n", i+1, r.MovieID)
-			}
-		}
-		fmt.Println()
+	err = StartNodeServer(port, ds)
+	if err != nil {
+		log.Fatal(err)
 	}
+
 }
 
 // convertir enum a texto

@@ -318,3 +318,38 @@ func RecommendItemBasedParallel(ds *Dataset, user int, topK int, metric SimMetri
 
 	return topKFromMap(scores, topK)
 }
+
+// RecommendScoreSingle: calcula score de un solo item (para nodos distribuidos)
+func RecommendScoreSingle(itemV int, userRatings map[int]float64, itemIndex map[int]map[int]float64, metric SimMetric, neighborK int) float64 {
+	simScores := make(map[int]float64, len(userRatings))
+	vecB := itemIndex[itemV]
+
+	for itemU := range userRatings {
+		vecA := itemIndex[itemU]
+		simScores[itemU] = simBetween(vecA, vecB, metric)
+	}
+
+	neighbors := topNneighborsFromScores(simScores, neighborK)
+
+	num := 0.0
+	den := 0.0
+	for _, nb := range neighbors {
+		r := userRatings[nb.id]
+		num += nb.score * r
+		if nb.score < 0 {
+			den -= nb.score
+		} else {
+			den += nb.score
+		}
+	}
+
+	if den == 0 {
+		return 0
+	}
+	return num / den
+}
+
+// RecommendTopK convierte map en lista ordenada
+func RecommendTopK(scores map[int]float64, k int) []ItemScore {
+	return topKFromMap(scores, k)
+}
