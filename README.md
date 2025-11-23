@@ -47,7 +47,7 @@ El sistema:
 ### 📦 2. Tecnologías utilizadas
 | Componente              | Tecnología                     |
 |-------------------------|--------------------------------|
-| Lenguaje                | Go 1.22                        |
+| Lenguaje                | Go 1.25.1                        |
 | Cálculo distribuido     | TCP sockets                    |
 | Dataset                 | MovieLens 10M / 20M / 25M      |
 | Caché                   | Redis                          |
