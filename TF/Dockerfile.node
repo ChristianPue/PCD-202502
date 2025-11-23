@@ -1,0 +1,18 @@
+FROM golang:1.25.1 AS builder
+
+WORKDIR /app
+COPY . .
+
+RUN go mod tidy
+RUN CGO_ENABLED=0 GOOS=linux go build -o node ./cmd/node
+
+# Imagen final
+FROM alpine:latest
+WORKDIR /app
+
+COPY --from=builder /app/node .
+COPY dataset ./dataset
+
+EXPOSE 9001
+
+CMD ["./node", "10", "9001"]

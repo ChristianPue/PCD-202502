@@ -53,17 +53,3 @@ func main() {
 	}
 
 }
-
-// convertir enum a texto
-func metricName(m ml.SimMetric) string {
-	switch m {
-	case ml.CosineSim:
-		return "Coseno"
-	case ml.PearsonSim:
-		return "Pearson"
-	case ml.JaccardSim:
-		return "Jaccard"
-	default:
-		return "Desconocida"
-	}
-}

@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redis
+      - mongo
+      - node1
+      - node2
+
+  node1:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    environment:
+      - NODE_PORT=9001
+    ports:
+      - "9001:9001"
+
+  node2:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    environment:
+      - NODE_PORT=9002
+    ports:
+      - "9002:9002"
+
+  redis:
+    image: redis:latest
+    ports:
+      - "6379:6379"
+
+  mongo:
+    image: mongo:latest
+    ports:
+      - "27017:27017"
