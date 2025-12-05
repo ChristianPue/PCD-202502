@@ -28,6 +28,11 @@ func StartNodeServer(port string, ds *ml.Dataset) error {
 	addr := ":" + port
 	fmt.Println("[NODE] Escuchando en", addr)
 
+	// Pre-calcular índices una sola vez
+	fmt.Println("[NODE] Construyendo índice de items...")
+	itemIndex := ml.BuildItemIndex(ds)
+	fmt.Println("[NODE] Índice construido. Listo para recibir tareas.")
+
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		return err
@@ -39,12 +44,12 @@ func StartNodeServer(port string, ds *ml.Dataset) error {
 			fmt.Println("Error aceptando conexión:", err)
 			continue
 		}
-		go handleConnection(conn, ds)
+		go handleConnection(conn, ds, itemIndex)
 	}
 }
 
 // Procesa una solicitud entrante
-func handleConnection(conn net.Conn, ds *ml.Dataset) {
+func handleConnection(conn net.Conn, ds *ml.Dataset, itemIndex map[int]map[int]float64) {
 	defer conn.Close()
 
 	reader := bufio.NewReader(conn)
@@ -62,8 +67,6 @@ func handleConnection(conn net.Conn, ds *ml.Dataset) {
 		return
 	}
 
-	// Construir itemIndex una vez por nodo (simple)
-	itemIndex := ml.BuildItemIndex(ds)
 	userRatings := ds.UserRatings[task.UserID]
 
 	// Procesar items del chunk

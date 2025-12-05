@@ -12,18 +12,36 @@ La arquitectura contiene:
 
 ## 🚀 1. Cómo ejecutar el sistema
 ### ✔️ 1.1 Ejecutar nodos ML (nodos trabajadores)
-En dos terminales distintas:
+En tres terminales distintas:
 ```bash
 go run ./cmd/node 10 9001
 ```
 ```bash
 go run ./cmd/node 10 9002
 ```
+```bash
+go run ./cmd/node 10 9003
+```
+
 Donde:
 - `10` es el tamaño del dataset (10M, 20M, 25M)
-- `9001` y `9002` son los puertos de los nodos.
+- `9001`, `9002` y `9003` son los puertos de los nodos.
 
 ### ✔️ 1.2 Ejecutar API
+Comprobar si Redis y MongoDB están corriendo:
+```bash
+docker ps
+```
+
+Si no están corriendo, iniciarlos:
+```bash
+docker-compose up -d
+```
+Comandos para levantar Redis y Mongo
+```bash
+docker-compose up -d redis mongo
+```
+
 En otra terminal:
 ```bash
 go run ./cmd/api
@@ -132,6 +150,7 @@ Las imagenes son los siguientes archivos:
 api.tar
 node1.tar
 node2.tar
+node3.tar
 ```
 
 #### Ejecutar

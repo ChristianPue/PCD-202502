@@ -120,9 +120,14 @@ func RecommendItemBased(ds *Dataset, user int, topK int, metric SimMetric, neigh
 	// candidatos = todos los items excepto los ya vistos por user
 	candidates := make([]int, 0)
 	for it := range itemIndex {
-		if _, seen := userRatings[it]; !seen {
-			candidates = append(candidates, it)
+		if _, seen := userRatings[it]; seen {
+			continue
 		}
+		// Filtrar películas que no tengan metadata válida
+		if _, ok := ds.MoviesMeta[it]; !ok {
+			continue
+		}
+		candidates = append(candidates, it)
 	}
 
 	scores := make(map[int]float64)

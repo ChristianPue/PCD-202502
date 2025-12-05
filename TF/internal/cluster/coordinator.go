@@ -50,20 +50,23 @@ func NewCoordinator(nodes []string, ds *ml.Dataset) *Coordinator {
 // -------------------------------
 
 // Divide lista en N partes iguales
+// Divide lista en N partes iguales
 func splitIntoChunks(items []int, n int) [][]int {
-	res := make([][]int, 0)
-	chunkSize := len(items) / n
-	if chunkSize == 0 {
-		chunkSize = 1
+	if n <= 0 {
+		return [][]int{items}
 	}
 
-	for i := 0; i < len(items); i += chunkSize {
-		end := i + chunkSize
-		if end > len(items) {
-			end = len(items)
-		}
-		res = append(res, items[i:end])
+	res := make([][]int, n)
+	for i := 0; i < n; i++ {
+		res[i] = make([]int, 0)
 	}
+
+	// Round-robin distribution
+	for i, item := range items {
+		idx := i % n
+		res[idx] = append(res[idx], item)
+	}
+
 	return res
 }
 
