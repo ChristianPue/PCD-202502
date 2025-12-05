@@ -1,6 +1,6 @@
 para ratings.csv:
 userId,movieId,rating,timestamp
 para movies.csv:
-movieId::title::genres
+movieId::title::genres(genre1|genre2|...)
 para tags.csv:
 UserID::MovieID::Tag::Timestamp
