@@ -4,14 +4,19 @@ const WS_URL = import.meta.env.VITE_WS_URL || 'ws://localhost:8080/ws';
 
 // Types
 export interface Movie {
-  id: number;          // Matches MovieInfo.ID
-  movieId?: number;    // Matches /recommend response
+  id: number;          // Unificado
   title: string;
-  genres: string;      // Backend sends pipe-separated string
-  score?: number;      // For recommendations
-  poster?: string;     // Optional, if we add it later
-  year?: number;
-  rating?: number;
+  genres: string[];    // Convertiremos el string "Action|Adventure" a array para el frontend
+  score?: number;      // Opcional, solo viene en recomendaciones
+}
+
+// Lo que responde el Backend (Raw)
+interface BackendDTO {
+  id?: number;         // Viene en /movies y /search
+  movieId?: number;    // Viene en /recommend
+  title: string;
+  genres: string;      // Viene como "Action|Adventure"
+  score?: number;
 }
 
 export interface PaginatedResponse<T> {
@@ -21,80 +26,72 @@ export interface PaginatedResponse<T> {
   offset: number;
 }
 
-interface RequestOptions extends RequestInit {
-  params?: Record<string, string | number>;
-}
+// Helper para limpiar los datos crudos del backend
+const normalizeMovie = (raw: BackendDTO): Movie => ({
+  id: raw.id || raw.movieId || 0,
+  title: raw.title,
+  genres: raw.genres ? raw.genres.split('|') : [], // "Action|Comedy" -> ["Action", "Comedy"]
+  score: raw.score,
+});
 
-// Fetch wrapper with error handling
-async function fetchAPI<T>(
-  endpoint: string,
-  options: RequestOptions = {}
-): Promise<T> {
-  const { params, ...fetchOptions } = options;
+// Fetch wrapper genérico
+async function fetchAPI<T>(endpoint: string, params: Record<string, string | number> = {}): Promise<T> {
+  const url = new URL(`${API_BASE_URL}${endpoint}`);
 
-  // Build URL with query parameters
-  let url = `${API_BASE_URL}${endpoint}`;
-  if (params) {
-    const searchParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== null) {
-        searchParams.append(key, String(value));
-      }
-    });
-    const queryString = searchParams.toString();
-    if (queryString) {
-      url += `?${queryString}`;
+  Object.keys(params).forEach(key => {
+    if (params[key] !== undefined) {
+      url.searchParams.append(key, String(params[key]));
     }
-  }
+  });
 
   try {
-    const response = await fetch(url, {
-      ...fetchOptions,
-      headers: {
-        'Content-Type': 'application/json',
-        ...fetchOptions.headers,
-      },
+    const res = await fetch(url.toString(), {
+      headers: { 'Content-Type': 'application/json' }
     });
 
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-
-    return await response.json();
+    if (!res.ok) throw new Error(`API Error: ${res.status}`);
+    return await res.json();
   } catch (error) {
-    console.error('API request failed:', error);
+    console.error(`Error fetching ${endpoint}:`, error);
     throw error;
   }
 }
 
-// HTTP Methods
-const api = {
-  get: <T>(endpoint: string, params?: Record<string, string | number>) =>
-    fetchAPI<T>(endpoint, { method: 'GET', params }),
-};
-
-// API Functions
+// API Methods
 export const movieAPI = {
-  // 0. GET /health
-  getHealth: () =>
-    fetch(`${API_BASE_URL}/health`).then(res => res.text()),
+  getHealth: () => fetch(`${API_BASE_URL}/health`).then(res => res.text()),
 
-  // Helper for WebSocket URL
   getWsUrl: () => WS_URL,
 
-  // 1. GET /movies?limit=&offset=
-  getMovies: (limit: number = 50, offset: number = 0) =>
-    api.get<PaginatedResponse<Movie>>('/movies', { limit, offset }),
+  // 1. Catálogo (Paginado)
+  getMovies: async (limit = 50, offset = 0) => {
+    const res = await fetchAPI<PaginatedResponse<BackendDTO>>('/movies', { limit, offset });
+    return {
+      ...res,
+      data: res.data.map(normalizeMovie)
+    };
+  },
 
-  // 2. GET /movies/:id
-  getMovieById: (id: string | number) =>
-    api.get<Movie>(`/movies/${id}`),
+  // 2. Buscar por ID (El endpoint SÍ existe en tu backend actual)
+  getMovieById: async (id: string | number) => {
+    try {
+      const res = await fetchAPI<BackendDTO>(`/movies/${id}`);
+      return normalizeMovie(res);
+    } catch (e) {
+      return null;
+    }
+  },
 
-  // 3. GET /search?q=
-  searchMovies: (query: string) =>
-    api.get<Movie[]>('/search', { q: query }),
+  // 3. Buscador
+  searchMovies: async (query: string) => {
+    if (!query) return [];
+    const res = await fetchAPI<BackendDTO[]>('/search', { q: query });
+    return (res || []).map(normalizeMovie);
+  },
 
-  // 4. GET /recommend/:userId
-  getRecommendations: (userId: string | number) =>
-    api.get<Movie[]>(`/recommend/${userId}`),
+  // 4. Recomendaciones HTTP
+  getRecommendations: async (userId: string | number) => {
+    const res = await fetchAPI<BackendDTO[]>(`/recommend/${userId}`);
+    return (res || []).map(normalizeMovie);
+  },
 };

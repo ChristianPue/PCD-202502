@@ -23,11 +23,26 @@ go run ./cmd/node 10 9002
 go run ./cmd/node 10 9003
 ```
 
+### ✔️ 1.2 Levantar el API
+```bash
+cd TF
+go run ./cmd/api
+```
+El API estará disponible en `http://localhost:8080`
+
+### ✔️ 1.3 Frontend
+```bash
+cd TF/frontend
+npm install
+npm run dev
+```
+Abrir `http://localhost:5173` (o el puerto que indique Vite)
+
 Donde:
 - `10` es el tamaño del dataset (10M, 20M, 25M)
 - `9001`, `9002` y `9003` son los puertos de los nodos.
 
-### ✔️ 1.2 Ejecutar API
+### ✔️ 1.4 Ejecutar API para Docker
 Comprobar si Redis y MongoDB están corriendo:
 ```bash
 docker ps
@@ -75,38 +90,39 @@ El sistema:
 
 ### 📚 3. Arquitectura del Proyecto
 ```
-TF/
-├── cmd/
-│   ├── api/
-│   │   ├── main.go
-│   │   └── ws.go
-│   └── node/
-│       ├── main.go
-│       ├── tcp_server.go
-│       └── worker.go
-├── dataset/
-|   ├── 10M/
-|   ├── 20M/
-|   └── 25M/
-├── frontend/...
-├── internal/
-|   ├── cluster/
-|   │   ├── coordinator.go
-|   │   └── protocol.go
+├── TF/
+│   ├── cmd/
+│   │   └── api/                # Código del API REST
+│   ├── main.go                  # Entry point del API
+│   ├── ws.go                    # WebSocket support
+│   ├── node/
+│   │   ├── main.go              # Entry point de los nodos workers
+│   │   ├── tcp_server.go
+│   │   ├── worker.go
+│   │   └── dataset/             # Datasets preprocesados por nodo
+│   │       ├── 10M/
+│   │       │   ├── movies.csv
+│   │       │   ├── ratings.csv
+│   │       │   └── tags.csv
+│   │       ├── 20M/
+│   │       └── 25M/
+│   ├── frontend/                # Frontend en React/Vite
+│   ├── internal/
+│   │   └── cluster/             # Lógica de coordinación y comunicación
+│   ├── coordinator.go
+│   ├── protocol.go
 │   ├── ml/
 │   │   ├── dataset.go
-│   │   ├── recommender.go
-│   │   └── similarity.go
-│   └── storage/
-│       ├── mongo.go
-│       └── redis.go
-├── api.exe
-├── Dockerfile.api
-├── Dockerfile.node
-├── docker-compose.yml
-├── go.mod
-├── go.sum
-└── README.md
+│   │   ├── recommender.go       # Algoritmos de recomendación
+│   │   └── similarity.go        # Cálculo de similitud (coseno, etc.)
+│   ├── storage/
+│   │   ├── mongo.go             # Persistencia de resultados/cache
+│   │   └── redis.go
+│   ├── api.exe                  # Binario compilado (Windows)
+│   ├── docker-compose.yml
+│   ├── Dockerfile.api
+│   ├── Dockerfile.node
+│   └── go.mod
 ```
 
 ### ⚙️ 4. ¿Qué hace cada módulo?

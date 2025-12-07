@@ -19,7 +19,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [user, setUser] = useState<User | null>(null);
 
   useEffect(() => {
-    // Check for persisted user on mount
+    // Recuperar sesión al cargar
     const storedUser = localStorage.getItem('currentUser');
     if (storedUser) {
       setUser(JSON.parse(storedUser));
@@ -27,9 +27,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const login = (username: string, password: string) => {
-    // For simulation, we just check if the user exists in localStorage
-    // In a real app, we would validate the password too
-    console.log('Login attempt:', username, password ? '***' : 'no-pass');
+    console.log('Login attempt:', username);
+
+    // ---------------------------------------------------------
+    // MODO DEMO / TESTING:
+    // Si el usuario ingresa un NÚMERO (ej: "1", "42"), 
+    // lo tratamos como un UserID existente del Dataset.
+    // Esto es vital para ver recomendaciones reales.
+    // ---------------------------------------------------------
+    const parsedId = parseInt(username, 10);
+
+    if (!isNaN(parsedId) && parsedId > 0) {
+      // Crear un usuario ficticio basado en el ID del dataset
+      const datasetUser: User = {
+        id: parsedId,
+        name: `Dataset User ${parsedId}`,
+        email: `user${parsedId}@movielens.org`
+      };
+
+      setUser(datasetUser);
+      localStorage.setItem('currentUser', JSON.stringify(datasetUser));
+      return true;
+    }
+
+    // Lógica antigua (para usuarios registrados manualmente en el frontend)
     const users = JSON.parse(localStorage.getItem('users') || '[]');
     const foundUser = users.find((u: User) => u.name === username);
 
@@ -38,21 +59,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('currentUser', JSON.stringify(foundUser));
       return true;
     }
+
     return false;
   };
 
   const register = (username: string, email: string, password: string) => {
-    console.log('Registering:', username, email, password ? '***' : 'no-pass');
+    // Nota: Los usuarios nuevos NO tendrán recomendaciones hasta que el backend 
+    // soporte guardar nuevos ratings.
     const users = JSON.parse(localStorage.getItem('users') || '[]');
 
-    // Check if username or email already exists
     if (users.some((u: User) => u.name === username || u.email === email)) {
       return false;
     }
 
-    // Generate random ID between 1 and 1000 for demo purposes
+    // Generamos IDs altos para no chocar con el dataset (que suele ir de 1 a ~138,000)
     const newUser: User = {
-      id: Math.floor(Math.random() * 1000) + 1,
+      id: Math.floor(Math.random() * 10000) + 200000,
       name: username,
       email: email
     };
@@ -60,7 +82,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     users.push(newUser);
     localStorage.setItem('users', JSON.stringify(users));
 
-    // Auto login after register
     setUser(newUser);
     localStorage.setItem('currentUser', JSON.stringify(newUser));
     return true;

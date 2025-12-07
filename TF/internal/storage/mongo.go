@@ -7,6 +7,7 @@ import (
 
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.mongodb.org/mongo-driver/mongo/readpref"
 )
 
 // Struct del almacenamiento Mongo
@@ -26,17 +27,23 @@ type RecommendationDocument struct {
 // Inicializar conexión a MongoDB
 // -------------------------------------------
 func NewMongoStore(uri string, dbName string) (*MongoStore, error) {
+	// 1. Timeout de conexión inicial (10s)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
 
-	// Crear cliente
-	client, err := mongo.Connect(context.Background(), options.Client().ApplyURI(uri))
+	clientOptions := options.Client().ApplyURI(uri)
+	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
-		return nil, fmt.Errorf("error conectando a MongoDB: %v", err)
+		return nil, fmt.Errorf("error creando cliente Mongo: %v", err)
 	}
 
-	// Seleccionar colección
-	collection := client.Database(dbName).Collection("recommendations")
+	// 2. Verificar conexión real (Ping)
+	if err := client.Ping(ctx, readpref.Primary()); err != nil {
+		return nil, fmt.Errorf("no se pudo hacer ping a Mongo: %v", err)
+	}
 
-	fmt.Println("[Mongo] Conectado OK, colección lista:", collection.Name())
+	collection := client.Database(dbName).Collection("recommendations")
+	fmt.Println("[Mongo] Conectado y listo en colección:", collection.Name())
 
 	return &MongoStore{
 		client:     client,
@@ -48,6 +55,9 @@ func NewMongoStore(uri string, dbName string) (*MongoStore, error) {
 // Guardar un documento de recomendación
 // -------------------------------------------
 func (m *MongoStore) SaveRecommendation(userID int, movies []int) error {
+	// 3. Timeout por operación (5s). Si Mongo está lento, fallamos rápido.
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
 	doc := RecommendationDocument{
 		UserID:    userID,
@@ -55,11 +65,11 @@ func (m *MongoStore) SaveRecommendation(userID int, movies []int) error {
 		Timestamp: time.Now(),
 	}
 
-	_, err := m.collection.InsertOne(context.Background(), doc)
+	_, err := m.collection.InsertOne(ctx, doc)
 	if err != nil {
 		return fmt.Errorf("error insertando en MongoDB: %v", err)
 	}
 
-	fmt.Println("[Mongo] Recomendación guardada para user:", userID)
+	// fmt.Println("[Mongo] Guardado para user:", userID) // Comentar para no ensuciar logs en prod
 	return nil
 }

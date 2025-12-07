@@ -1,39 +1,20 @@
 package cluster
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"net"
-	"sort"
+	"time" // IMPORTANTE: Agregado para los timeouts
 
 	"TF/internal/ml"
 )
-
-// -------------------------------
-// Estructuras compartidas
-// -------------------------------
-
-// Tarea enviada a los nodos ML
-type Task struct {
-	UserID    int   `json:"user_id"`
-	Items     []int `json:"items"`
-	Metric    int   `json:"metric"`
-	NeighborK int   `json:"neighbor_k"`
-	TopK      int   `json:"top_k"`
-}
-
-// Respuesta recibida desde cada nodo ML
-type TaskResult struct {
-	Partial map[int]float64 `json:"partial"`
-}
 
 // -------------------------------
 // Coordinador
 // -------------------------------
 
 type Coordinator struct {
-	NodeAddresses []string    // lista de nodos ML ("localhost:9001"...)
+	NodeAddresses []string    // lista de nodos ML ("node1:9001"...)
 	Dataset       *ml.Dataset // dataset cargado
 }
 
@@ -49,7 +30,6 @@ func NewCoordinator(nodes []string, ds *ml.Dataset) *Coordinator {
 // Lógica principal distribuida
 // -------------------------------
 
-// Divide lista en N partes iguales
 // Divide lista en N partes iguales
 func splitIntoChunks(items []int, n int) [][]int {
 	if n <= 0 {
@@ -71,7 +51,7 @@ func splitIntoChunks(items []int, n int) [][]int {
 }
 
 // Ejecuta item-based de forma distribuida
-func (c *Coordinator) RecommendDistributed(userID int, topK int, metric ml.SimMetric, neighborK int) map[int]float64 {
+func (c *Coordinator) RecommendDistributed(userID int, topK int, metric int, neighborK int) map[int]float64 {
 
 	// 1) Construir lista de items candidatos (todas las películas que user NO ha visto)
 	userRatings := c.Dataset.UserRatings[userID]
@@ -92,15 +72,16 @@ func (c *Coordinator) RecommendDistributed(userID int, topK int, metric ml.SimMe
 
 	// 4) Enviar tareas a cada nodo
 	for i, nodeAddr := range c.NodeAddresses {
-		task := Task{
+		// NOTA: Usamos TaskRequest directamente (sin el prefijo cluster.)
+		task := TaskRequest{
 			UserID:    userID,
-			Items:     chunks[i],
-			Metric:    int(metric),
+			ItemIDs:   chunks[i],
+			Metric:    metric,
 			NeighborK: neighborK,
 			TopK:      topK,
 		}
 
-		go func(addr string, t Task) {
+		go func(addr string, t TaskRequest) {
 			res := sendTask(addr, t)
 			resultCh <- res
 		}(nodeAddr, task)
@@ -120,58 +101,49 @@ func (c *Coordinator) RecommendDistributed(userID int, topK int, metric ml.SimMe
 }
 
 // Enviar tarea a un nodo ML vía TCP
-func sendTask(address string, task Task) map[int]float64 {
-	conn, err := net.Dial("tcp", address)
+// NOTA: Aquí también quitamos el prefijo cluster.
+func sendTask(address string, task TaskRequest) map[int]float64 {
+	conn, err := net.DialTimeout("tcp", address, 2*time.Second)
 	if err != nil {
-		fmt.Println("[COORD] Error conectando a nodo:", address, err)
+		fmt.Printf("[COORD] Error conectando a nodo %s: %v\n", address, err)
 		return map[int]float64{}
 	}
 	defer conn.Close()
 
-	// enviar JSON
-	data, _ := json.Marshal(task)
-	data = append(data, '\n')
-	conn.Write(data)
+	conn.SetDeadline(time.Now().Add(1800 * time.Second))
 
-	// leer respuesta
-	reader := bufio.NewReader(conn)
-	respBytes, err := reader.ReadBytes('\n')
-	if err != nil {
-		fmt.Println("[COORD] Error leyendo respuesta:", err)
+	// enviar JSON
+	encoder := json.NewEncoder(conn)
+	if err := encoder.Encode(&task); err != nil {
+		fmt.Printf("[COORD] Error enviando a %s: %v\n", address, err)
 		return map[int]float64{}
 	}
 
-	var res TaskResult
-	json.Unmarshal(respBytes, &res)
-	return res.Partial
+	// leer respuesta
+	// NOTA: Usamos TaskResponse directamente
+	var res TaskResponse
+	decoder := json.NewDecoder(conn)
+	if err := decoder.Decode(&res); err != nil {
+		fmt.Printf("[COORD] Error leyendo de %s: %v\n", address, err)
+		return map[int]float64{}
+	}
+
+	if res.Error != "" {
+		fmt.Printf("[COORD] Nodo %s reportó error: %s\n", address, res.Error)
+		return map[int]float64{}
+	}
+
+	return res.Scores
 }
 
 // ------------------------------------------------------------
 // Método público para ser usado desde la API
 // ------------------------------------------------------------
-func (c *Coordinator) ComputeRecommendations(userID int, topK int, metric ml.SimMetric, neighborK int) []ml.ItemScore {
+func (c *Coordinator) ComputeRecommendations(userID int, topK int, metric int, neighborK int) []ml.ItemScore {
 
 	// 1. Obtener scores distribuidos (map[int]float64)
 	scoresMap := c.RecommendDistributed(userID, topK, metric, neighborK)
 
-	// 2. Convertir a lista
-	list := make([]ml.ItemScore, 0, len(scoresMap))
-	for movieID, score := range scoresMap {
-		list = append(list, ml.ItemScore{
-			MovieID: movieID,
-			Score:   score,
-		})
-	}
-
-	// 3. Ordenar por score descendente
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].Score > list[j].Score
-	})
-
-	// 4. Obtener top K
-	if len(list) > topK {
-		list = list[:topK]
-	}
-
-	return list
+	// 2. Convertir a lista usando helper de ml
+	return ml.RecommendTopK(scoresMap, topK)
 }

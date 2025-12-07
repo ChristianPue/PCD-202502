@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -14,13 +15,42 @@ import (
 	"TF/internal/storage"
 )
 
-var coord *cluster.Coordinator
-var redisStore *storage.RedisStore
-var mongoStore *storage.MongoStore
+var (
+	coord        *cluster.Coordinator
+	redisStore   *storage.RedisStore
+	mongoStore   *storage.MongoStore
+	sortedMovies []ml.MovieInfo // Cache ordenado para paginación estable
+)
 
 // ---------------------------
 //
-//	/health
+//	Middleware CORS Global
+//
+// ---------------------------
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// 1. Permitir origen (Frontend)
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+
+		// 2. Permitir métodos
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS, PUT, DELETE")
+
+		// 3. CRÍTICO: Permitir headers específicos como Content-Type
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With")
+
+		// 4. Manejar preflight (OPTIONS)
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
+}
+
+// ---------------------------
+//
+//	Health Check
 //
 // ---------------------------
 func healthHandler(w http.ResponseWriter, r *http.Request) {
@@ -34,94 +64,65 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 //
 // ---------------------------
 func recommendHandler(w http.ResponseWriter, r *http.Request) {
-	// obtener userId de la URL
-	uidStr := r.URL.Path[len("/recommend/"):]
+	// Nota: Ya no necesitamos llamar a enableCors aquí manualmente
+
+	uidStr := strings.TrimPrefix(r.URL.Path, "/recommend/")
 	uid, err := strconv.Atoi(uidStr)
 	if err != nil {
 		http.Error(w, "userId inválido", http.StatusBadRequest)
 		return
 	}
 
-	// -------------------------------
-	// 1) Revisar cache Redis primero
-	// -------------------------------
-	cached, _ := redisStore.GetRecommendations(uid)
-	if cached != nil {
-		fmt.Println("[CACHE] Resultado desde Redis")
-
-		// convertir []int → []ItemScore
-		res := make([]ml.ItemScore, len(cached))
-		for i, id := range cached {
-			res[i] = ml.ItemScore{MovieID: id, Score: 0} // score no necesario aquí
+	// 1. Intentar desde Redis (Cache Hit)
+	if redisStore != nil {
+		cachedIDs, _ := redisStore.GetRecommendations(uid)
+		if len(cachedIDs) > 0 {
+			fmt.Printf("[API] Cache HIT user %d\n", uid)
+			response := enrichMovies(cachedIDs, coord.Dataset)
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(response)
+			return
 		}
+	}
 
-		w.Header().Set("Content-Type", "application/json")
+	// 2. Calcular (Cache Miss)
+	fmt.Printf("[API] Cache MISS user %d -> Calculando en cluster...\n", uid)
+	results := coord.ComputeRecommendations(uid, 10, 1, 20)
 
-		// Enriquecer respuesta con metadata (title, genres)
-		out := make([]map[string]interface{}, len(res))
+	movieIDs := make([]int, len(results))
+	for i, item := range results {
+		movieIDs[i] = item.MovieID
+	}
 
-		for i, item := range res {
-			meta := coord.Dataset.MoviesMeta[item.MovieID]
+	// 3. Guardar en Storage (Async)
+	go func(u int, ids []int) {
+		if redisStore != nil {
+			redisStore.SaveRecommendations(u, ids)
+		}
+		if mongoStore != nil {
+			mongoStore.SaveRecommendation(u, ids)
+		}
+	}(uid, movieIDs)
 
-			out[i] = map[string]interface{}{
-				"movieId": item.MovieID,
+	// 4. Responder
+	response := enrichMovies(movieIDs, coord.Dataset)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// Helper para convertir IDs a objetos JSON completos
+func enrichMovies(ids []int, ds *ml.Dataset) []map[string]interface{} {
+	out := make([]map[string]interface{}, 0, len(ids))
+	for _, id := range ids {
+		if meta, ok := ds.MoviesMeta[id]; ok {
+			out = append(out, map[string]interface{}{
+				"movieId": id,
 				"title":   meta.Title,
 				"genres":  meta.Genres,
-				"score":   item.Score,
-			}
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(out)
-
-		return
-	}
-
-	// -----------------------------------
-	// 2) Si no hay cache → calcular normal
-	// -----------------------------------
-	fmt.Println("[CACHE] No existe → calculando…")
-
-	// llamar al coordinador con parámetros por defecto
-	// topK=10, metric=CosineSim (0), neighborK=20
-	res := coord.ComputeRecommendations(uid, 10, ml.CosineSim, 20)
-
-	// guardar en Mongo
-	// convertimos ItemScore -> []int (solo MovieID)
-	movieIDs := make([]int, len(res))
-	for i, r := range res {
-		movieIDs[i] = r.MovieID
-	}
-
-	// -----------------------------------
-	// 3) Guardar en cache Redis
-	// -----------------------------------
-	redisStore.SaveRecommendations(uid, movieIDs)
-
-	// almacena recomendación
-	if mongoStore != nil {
-		mongoStore.SaveRecommendation(uid, movieIDs)
-	}
-
-	// -------------------------------------------
-	// Enriquecer respuesta con metadata
-	// -------------------------------------------
-	out := make([]map[string]interface{}, len(res))
-
-	for i, item := range res {
-		meta := coord.Dataset.MoviesMeta[item.MovieID]
-
-		out[i] = map[string]interface{}{
-			"movieId": item.MovieID,
-			"title":   meta.Title,
-			"genres":  meta.Genres,
-			"score":   item.Score,
+			})
 		}
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(out)
-
+	return out
 }
 
 // ---------------------------
@@ -130,71 +131,74 @@ func recommendHandler(w http.ResponseWriter, r *http.Request) {
 //
 // ---------------------------
 func main() {
-
-	// cargar dataset una sola vez
-	path := os.Getenv("DATASET_PATH")
-	if path == "" {
-		log.Fatal("Falta variable DATASET_PATH en API")
+	// 1. Cargar configuración
+	datasetPath := os.Getenv("DATASET_PATH")
+	if datasetPath == "" {
+		log.Fatal("Falta variable DATASET_PATH")
 	}
 
-	ds, err := ml.LoadDataset(path)
+	nodesEnv := os.Getenv("WORKER_NODES")
+	if nodesEnv == "" {
+		nodesEnv = "localhost:9001,localhost:9002,localhost:9003"
+		fmt.Println("[WARN] Usando nodos por defecto (localhost).")
+	}
+	nodeAddrs := strings.Split(nodesEnv, ",")
 
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		redisAddr = "localhost:6379"
+	}
+
+	mongoAddr := os.Getenv("MONGO_ADDR")
+	if mongoAddr == "" {
+		mongoAddr = "mongodb://localhost:27017"
+	}
+
+	// 2. Cargar Dataset
+	fmt.Println("[API] Cargando dataset...")
+	ds, err := ml.LoadDataset(datasetPath)
 	if err != nil {
 		log.Fatal("Error cargando dataset: ", err)
 	}
 
-	// inicializar coordinador con nodos y dataset
-	coord = cluster.NewCoordinator([]string{
-		"localhost:9001",
-		"localhost:9002",
-	}, ds)
-
-	// iniciar Redis
-	redisStore, err = storage.NewRedisStore("localhost:6379")
-	if err != nil {
-		log.Fatal("Error conectando a Redis:", err)
+	// 3. Indexar
+	fmt.Println("[API] Indexando películas para paginación...")
+	sortedMovies = make([]ml.MovieInfo, 0, len(ds.MoviesMeta))
+	for _, m := range ds.MoviesMeta {
+		sortedMovies = append(sortedMovies, m)
 	}
+	sort.Slice(sortedMovies, func(i, j int) bool {
+		return sortedMovies[i].ID < sortedMovies[j].ID
+	})
 
-	// inicializar MongoDB
-	mongoStore, err = storage.NewMongoStore("mongodb://localhost:27017", "pcd")
-	if err != nil {
-		log.Fatal("Error conectando a Mongo:", err)
-	}
+	// 4. Inicializar
+	coord = cluster.NewCoordinator(nodeAddrs, ds)
 
-	fmt.Println("API escuchando en http://localhost:8080")
-
-	// registrar coordinador para WebSocket
+	// WebSocket Setup (Vital para el chat/WS)
 	SetWebSocketCoordinator(coord)
 
-	// Middleware CORS
-	corsMiddleware := func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", "*")
-			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-			if r.Method == "OPTIONS" {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-
-			next.ServeHTTP(w, r)
-		})
+	redisStore, err = storage.NewRedisStore(redisAddr)
+	if err != nil {
+		fmt.Println("[WARN] No se pudo conectar a Redis:", err)
 	}
 
+	mongoStore, err = storage.NewMongoStore(mongoAddr, "pcd")
+	if err != nil {
+		fmt.Println("[WARN] No se pudo conectar a Mongo:", err)
+	}
+
+	// 5. Rutas
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", healthHandler)
 	mux.HandleFunc("/recommend/", recommendHandler)
-	mux.HandleFunc("/ws", WebSocketHandler)
+	mux.HandleFunc("/ws", WebSocketHandler) // ¡No olvides registrar el WS!
 
-	// Nuevos endpoints
 	mux.HandleFunc("/movies", func(w http.ResponseWriter, r *http.Request) {
 		limitStr := r.URL.Query().Get("limit")
 		offsetStr := r.URL.Query().Get("offset")
 
 		limit := 50
 		offset := 0
-
 		if l, err := strconv.Atoi(limitStr); err == nil && l > 0 {
 			limit = l
 		}
@@ -202,46 +206,56 @@ func main() {
 			offset = o
 		}
 
-		var movies []ml.MovieInfo
-		// Convertir mapa a slice (ineficiente para datasets grandes, pero funcional para demo)
-		// En producción, usar una estructura de datos ordenada o base de datos
-		for _, m := range coord.Dataset.MoviesMeta {
-			movies = append(movies, m)
+		total := len(sortedMovies)
+		if offset >= total {
+			json.NewEncoder(w).Encode(map[string]interface{}{"data": []ml.MovieInfo{}, "total": total})
+			return
 		}
 
-		// Paginación simple (en memoria)
-		start := offset
 		end := offset + limit
-		if start > len(movies) {
-			start = len(movies)
-		}
-		if end > len(movies) {
-			end = len(movies)
+		if end > total {
+			end = total
 		}
 
-		// Nota: El orden del mapa es aleatorio, así que la paginación será inconsistente
-		// sin un ordenamiento previo. Para demo está bien.
-		paged := movies[start:end]
-
-		resp := map[string]interface{}{
-			"data":   paged,
-			"total":  len(movies),
+		data := sortedMovies[offset:end]
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"data":   data,
+			"total":  total,
 			"limit":  limit,
 			"offset": offset,
-		}
-
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		})
 	})
 
+	// NUEVO ENDPOINT: Obtener película por ID (/movies/123)
+	// Nota la barra al final "/movies/" para que capture todo lo que sigue
 	mux.HandleFunc("/movies/", func(w http.ResponseWriter, r *http.Request) {
-		idStr := r.URL.Path[len("/movies/"):]
+		// CORS Headers (ya cubierto por el middleware, pero no estorba)
+
+		// Validar que sea GET
+		if r.Method != "GET" {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+
+		// Extraer el ID de la URL. Ej: "/movies/1" -> "1"
+		idStr := strings.TrimPrefix(r.URL.Path, "/movies/")
+
+		// Si el string está vacío (es decir, llamaron a /movies/ sin ID), ignoramos
+		// para que no choque con el endpoint de paginación si hubiera conflicto,
+		// aunque Go suele manejar esto bien si el otro no tiene slash final.
+		if idStr == "" {
+			http.Error(w, "ID requerido", http.StatusBadRequest)
+			return
+		}
+
 		id, err := strconv.Atoi(idStr)
 		if err != nil {
 			http.Error(w, "ID inválido", http.StatusBadRequest)
 			return
 		}
 
+		// Buscar en el mapa en memoria
 		if movie, ok := coord.Dataset.MoviesMeta[id]; ok {
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(movie)
@@ -251,27 +265,28 @@ func main() {
 	})
 
 	mux.HandleFunc("/search", func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query().Get("q")
+		query := strings.ToLower(r.URL.Query().Get("q"))
 		if query == "" {
-			http.Error(w, "Query requerida", http.StatusBadRequest)
 			return
 		}
 
 		var results []ml.MovieInfo
-		qLower := strings.ToLower(query)
-		// Búsqueda lineal simple por título (case-insensitive)
-		for _, m := range coord.Dataset.MoviesMeta {
-			if strings.Contains(strings.ToLower(m.Title), qLower) {
+		count := 0
+		for _, m := range sortedMovies {
+			if strings.Contains(strings.ToLower(m.Title), query) {
 				results = append(results, m)
-				if len(results) >= 20 { // limitar resultados
+				count++
+				if count >= 20 {
 					break
 				}
 			}
 		}
-
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(results)
 	})
 
+	fmt.Println("[API] Servidor listo en port 8080")
+
+	// AQUI ESTÁ LA SOLUCIÓN: Envolvemos 'mux' con el middleware
 	log.Fatal(http.ListenAndServe(":8080", corsMiddleware(mux)))
 }

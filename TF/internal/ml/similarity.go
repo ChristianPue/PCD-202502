@@ -73,19 +73,23 @@ func Jaccard(a, b map[int]float64) float64 {
 	if len(a) == 0 && len(b) == 0 {
 		return 0
 	}
-	inter := 0
-	union := make(map[int]struct{})
+
+	intersection := 0
+	// Iteramos sobre el mapa más pequeño para eficiencia
+	if len(a) > len(b) {
+		a, b = b, a
+	}
+
 	for k := range a {
-		union[k] = struct{}{}
 		if _, ok := b[k]; ok {
-			inter++
+			intersection++
 		}
 	}
-	for k := range b {
-		union[k] = struct{}{}
-	}
-	if len(union) == 0 {
+
+	unionSize := len(a) + len(b) - intersection
+	if unionSize == 0 {
 		return 0
 	}
-	return float64(inter) / float64(len(union))
+
+	return float64(intersection) / float64(unionSize)
 }

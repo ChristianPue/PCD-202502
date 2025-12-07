@@ -3,6 +3,7 @@ package ml
 import (
 	"container/heap"
 	"sort"
+	"sync"
 )
 
 // SimMetric enumerator
@@ -277,10 +278,8 @@ func RecommendItemBasedParallel(ds *Dataset, user int, topK int, metric SimMetri
 	if !ok {
 		return nil
 	}
-
 	itemIndex := BuildItemIndex(ds)
 
-	// candidatos
 	candidates := make([]int, 0)
 	for it := range itemIndex {
 		if _, seen := userRatings[it]; !seen {
@@ -288,34 +287,42 @@ func RecommendItemBasedParallel(ds *Dataset, user int, topK int, metric SimMetri
 		}
 	}
 
-	chunk := len(candidates) / workers
-	if chunk == 0 {
-		chunk = 1
-	}
-
+	// Canal de resultados y WaitGroup
 	out := make(chan map[int]float64, workers)
+	var wg sync.WaitGroup
+
+	chunkSize := (len(candidates) + workers - 1) / workers
 
 	for w := 0; w < workers; w++ {
-		start := w * chunk
-		end := start + chunk
+		start := w * chunkSize
+		if start >= len(candidates) {
+			break
+		}
+		end := start + chunkSize
 		if end > len(candidates) {
 			end = len(candidates)
 		}
 
+		wg.Add(1)
 		go func(slice []int) {
+			defer wg.Done()
 			partial := make(map[int]float64)
 			for _, itemV := range slice {
-				// *** igual que la lógica normal que ya tienes ***
 				partial[itemV] = scoreItem(ds, userRatings, itemIndex, itemV, metric, neighborK)
 			}
 			out <- partial
 		}(candidates[start:end])
 	}
 
-	// merge
+	// Cerrar el canal cuando todos terminen
+	go func() {
+		wg.Wait()
+		close(out)
+	}()
+
+	// Merge
 	scores := make(map[int]float64)
-	for i := 0; i < workers; i++ {
-		part := <-out
+	for part := range out { // range lee hasta que el canal se cierra
 		for k, v := range part {
 			scores[k] = v
 		}

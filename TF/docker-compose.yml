@@ -1,7 +1,6 @@
 version: "3.9"
 
 services:
-
   api:
     build:
       context: .
@@ -13,13 +12,24 @@ services:
       - mongo
       - node1
       - node2
+      - node3
+    environment:
+      # CRÍTICO: Aquí definimos los 3 nodos usando sus nombres de servicio docker
+      # El puerto debe coincidir con el puerto interno del contenedor (INTERNAL_PORT)
+      - WORKER_NODES=node1:9001,node2:9002,node3:9003
+      - REDIS_ADDR=redis:6379
+      - MONGO_ADDR=mongodb://mongo:27017
+      # Asegúrate de que esta ruta exista DENTRO del contenedor
+      - DATASET_PATH=/app/dataset/10M 
 
   node1:
     build:
       context: .
       dockerfile: Dockerfile.node
-    environment:
-      - NODE_PORT=9001
+    hostname: node1
+    # Sobrescribimos el comando para asegurar que escuche en el puerto correcto
+    # Asumiendo que tu main.go del nodo acepta argumentos: ./node [dataset] [puerto]
+    command: ["./node", "10", "9001"] 
     ports:
       - "9001:9001"
 
@@ -27,10 +37,19 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.node
-    environment:
-      - NODE_PORT=9002
+    hostname: node2
+    command: ["./node", "10", "9002"]
     ports:
       - "9002:9002"
+
+  node3:
+    build:
+      context: .
+      dockerfile: Dockerfile.node
+    hostname: node3
+    command: ["./node", "10", "9003"]
+    ports:
+      - "9003:9003"
 
   redis:
     image: redis:latest
