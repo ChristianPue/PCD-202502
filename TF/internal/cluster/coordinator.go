@@ -3,6 +3,7 @@ package cluster
 import (
 	"encoding/json"
 	"fmt"
+	"math/rand"
 	"net"
 	"time" // IMPORTANTE: Agregado para los timeouts
 
@@ -141,9 +142,42 @@ func sendTask(address string, task TaskRequest) map[int]float64 {
 // ------------------------------------------------------------
 func (c *Coordinator) ComputeRecommendations(userID int, topK int, metric int, neighborK int) []ml.ItemScore {
 
-	// 1. Obtener scores distribuidos (map[int]float64)
-	scoresMap := c.RecommendDistributed(userID, topK, metric, neighborK)
+	// Semilla para aleatoriedad (Vital para que varíe)
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
 
-	// 2. Convertir a lista usando helper de ml
-	return ml.RecommendTopK(scoresMap, topK)
+	// ESTRATEGIA: Pedimos el TRIPLE de lo necesario (Pool de candidatos)
+	// Ej: Si el usuario pide 10, calculamos el Top 30.
+	poolSize := topK * 3
+	var candidates []ml.ItemScore
+
+	// 1. VERIFICACIÓN DE USUARIO NUEVO (Cold Start)
+	userRatings, exists := c.Dataset.UserRatings[userID]
+	if !exists || len(userRatings) == 0 {
+		fmt.Printf("[COORD] Usuario %d es nuevo -> Pool de Populares\n", userID)
+		// Obtenemos populares, pero pedimos más (poolSize)
+		candidates = ml.GetPopularMovies(c.Dataset, poolSize)
+	} else {
+		// 2. ALGORITMO DISTRIBUIDO
+		// Obtenemos scores calculados por los workers
+		scoresMap := c.RecommendDistributed(userID, topK, metric, neighborK)
+
+		// Convertimos el mapa a una lista ordenada del Top 30 (poolSize)
+		candidates = ml.RecommendTopK(scoresMap, poolSize)
+	}
+
+	// 3. APLICAR VARIEDAD (Shuffle)
+	// Si tenemos suficientes candidatos, los mezclamos
+	if len(candidates) > 0 {
+		rng.Shuffle(len(candidates), func(i, j int) {
+			candidates[i], candidates[j] = candidates[j], candidates[i]
+		})
+	}
+
+	// 4. RETORNAR SOLO EL TOP K ORIGINAL
+	// Después de mezclar las 30 mejores, cortamos y devolvemos solo 10.
+	if len(candidates) > topK {
+		return candidates[:topK]
+	}
+
+	return candidates
 }

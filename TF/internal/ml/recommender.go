@@ -365,3 +365,53 @@ func RecommendScoreSingle(itemV int, userRatings map[int]float64, itemIndex map[
 func RecommendTopK(scores map[int]float64, k int) []ItemScore {
 	return topKFromMap(scores, k)
 }
+
+// GetPopularMovies calcula las películas con mejor promedio para usuarios nuevos.
+// Filtra películas con pocos votos para evitar outliers.
+func GetPopularMovies(ds *Dataset, topK int) []ItemScore {
+	type movieStats struct {
+		id    int
+		sum   float64
+		count int
+	}
+
+	stats := make(map[int]*movieStats)
+
+	// 1. Recorrer todos los ratings para calcular sumas y conteos
+	for _, ratings := range ds.UserRatings {
+		for mid, r := range ratings {
+			if _, ok := stats[mid]; !ok {
+				stats[mid] = &movieStats{id: mid}
+			}
+			stats[mid].sum += r
+			stats[mid].count++
+		}
+	}
+
+	// 2. Calcular promedio y filtrar
+	var list []ItemScore
+	minVotes := 50 // Solo considerar películas con al menos 50 votos
+
+	for _, s := range stats {
+		if s.count < minVotes {
+			continue
+		}
+		avg := s.sum / float64(s.count)
+		list = append(list, ItemScore{
+			MovieID: s.id,
+			Score:   avg,
+		})
+	}
+
+	// 3. Ordenar descendente por Score
+	sort.Slice(list, func(i, j int) bool {
+		return list[i].Score > list[j].Score
+	})
+
+	// 4. Recortar Top K
+	if len(list) > topK {
+		list = list[:topK]
+	}
+
+	return list
+}
